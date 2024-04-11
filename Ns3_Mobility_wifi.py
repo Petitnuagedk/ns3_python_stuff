@@ -4,6 +4,9 @@
 Created on Tue Apr  2 13:31:05 2024
 
 @author: hledirach
+
+usefull like : https://www.nsnam.org/docs/release/3.19/doxygen/manet-routing-compare_8cc_source.html
+               https://www.nsnam.org/docs/models/html/index.html
 """
 
 from matplotlib import pyplot as plt
@@ -97,17 +100,16 @@ def animateSimulation():
     return
 
 #%%
-def setup(n_nodes, scenario):
+def setup(scenario):
         
-    nodes = ns.network.NodeContainer()
-    nodes.Create(n_nodes)
+
     if scenario == "test":
-        nodes, interfaces = scenario_test(nodes)
+        nodes, interfaces = mob_wifi_setup()
     
     return nodes, interfaces
 
 
-def scenario_test(nodes):
+def mob_wifi_setup():
     """
     This fonction creat two nodes in a common network (subnet mask 255.255.255.0) and 
 
@@ -124,9 +126,12 @@ def scenario_test(nodes):
         DESCRIPTION.
 
     """
+    
+    nodes = ns.network.NodeContainer()
+    nodes.Create(5)
     # Set positions for nodes
     positions = ns.mobility.ListPositionAllocator()
-    for i in range(n_nodes):
+    for i in range(nodes.GetN()):
         position = ns.core.Vector(i * 10, 0, 0)  # Adjust coordinates as needed
         positions.Add(position)
     
@@ -134,6 +139,11 @@ def scenario_test(nodes):
     mobility.SetMobilityModel ("ns3::WaypointMobilityModel")
     mobility.SetPositionAllocator(positions)
     mobility.Install(nodes)
+    
+    
+    #################
+    
+    
     # Create a point-to-point helper : only for N ----- N
     # pointToPoint = ns.point_to_point.PointToPointHelper()
     # pointToPoint.SetDeviceAttribute("DataRate", ns.core.StringValue("5Mbps"))
@@ -143,6 +153,11 @@ def scenario_test(nodes):
     # Add IP stack to nodes
     
     channel = ns.wifi.YansWifiChannelHelper.Default()
+    
+    # ////2/////
+    channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel")
+    channel.AddPropagationLoss ("ns3::FriisPropagationLossModel")
+    # ////2/////
     #Create a channel by using defrault Yet Another Network Simulator
     #channel model, this channel servers for communication between wireless nodes
 
@@ -163,11 +178,21 @@ def scenario_test(nodes):
     #subchannel with the lowest center frequency (index 0).
 
     mac = ns.wifi.WifiMacHelper()
+    # ////2/////
+    mac.SetType ("ns3::AdhocWifiMac")
+    # ////2/////
+    # mac = ns.wifi.WifiMacHelper()
     #Create a helper object to configure MAC layer of wifi nodes
     ssid = ns.wifi.Ssid("ns-3-ssid")
     #Create a ssid for wifi network, which identifies a wifi network
 
     wifi = ns.wifi.WifiHelper()
+    
+    # ////2/////
+    wifi.SetRemoteStationManager ("ns3::ConstantRateWifiManager",
+                                 "DataMode", ns.core.StringValue("DsssRate11Mbps"),
+                                 "ControlMode", ns.core.StringValue ("DsssRate11Mbps"))
+    # ////2/////
     #Create a helper object to set up wifi network
 
     mac.SetType(
@@ -191,7 +216,6 @@ def scenario_test(nodes):
     address = ns.internet.Ipv4AddressHelper()
     address.SetBase(ns.network.Ipv4Address("10.1.1.0"), ns.network.Ipv4Mask("255.255.255.0"))
     interfaces = address.Assign(staDevices)
-    
     
     return nodes, interfaces
 
@@ -234,17 +258,62 @@ def coms_UDP(node_emit,node_reciev, interfaces, it):
     return
 #%%
 
-def animateWaypointWalkNodes(n_nodes):
+def behavior_test1(node_A, node_B, dirChange):
+    """
+    Update the position of the nodes in the scenario test 1
+
+    Parameters
+    ----------
+    currPos : ns.Vector
+        Coordinates of the current position (2D)
+    node_indx : int
+        Index of the node that needs nex coordinates
+
+    Returns
+    -------
+        None.
+
+    """
+    
+    r = [node_A,node_B]
+    for n in r:
+        if n is node_A:
+            mobility = n.GetObject[ns.WaypointMobilityModel]().__deref__()
+            currPos = mobility.GetPosition()
+            time = ns.Seconds(0.5)
+            
+            nextPos = ns.Vector(currPos.x,
+                                currPos.y+(2 if dirChange else -2),
+                                0)     
+            time = ns.Seconds(1+time.GetSeconds())
+            wpt = ns.Waypoint (time, nextPos);
+            mobility.AddWaypoint(wpt)
+            currPos = nextPos
+        if n is node_B:
+            mobility = n.GetObject[ns.WaypointMobilityModel]().__deref__()
+            currPos = mobility.GetPosition()
+            time = ns.Seconds(0.5)
+            nextPos = ns.Vector(currPos.x,
+                                currPos.y,
+                                0)
+            time = ns.Seconds(1+time.GetSeconds())
+            wpt = ns.Waypoint (time, nextPos);
+            mobility.AddWaypoint(wpt)
+            currPos = nextPos
+    return
+#%%
+
+def animateWaypointWalkNodes(scneario):
     print("starting...")
 
     ns.Simulator.Destroy()
     
-    nodes, interfaces = setup(n_nodes,"test")
+    nodes, interfaces = setup(scenario)
     print("nodes created, starting simulation...")
     
-    for node_i in range(n_nodes-1):
+    for node_i in range(nodes.GetN()-1):
         it = 5001
-        for node_j in range(node_i +1, n_nodes):
+        for node_j in range(node_i +1, nodes.GetN()):
             print("starting com setup between node ", node_i, " and node ", node_j)
             node_emit = nodes.Get(node_i).__deref__()
             coms_UDP(node_emit, node_j, interfaces,it)
@@ -254,57 +323,65 @@ def animateWaypointWalkNodes(n_nodes):
     # We need to setup the waypoints each node will walk on
     # In this case, we are going to make them walk in
     # the DVD Logo fashion
+    behavior = "t"
+    if behavior == "test":
+        behavior_test1(nodes.Get(0).__deref__(),nodes.Get(1).__deref__(),True)
+    else:
+        for node_i in range(nodes.GetN()):
+            node = nodes.Get(node_i).__deref__()
+            mobility = node.GetObject[ns.WaypointMobilityModel]().__deref__()
+            currPos = mobility.GetPosition()
+            time = ns.Seconds(0.5)
+            DIR = [1,1]
+            while time.GetSeconds() < 100:
+                # Behavior model goes here
+                
+                dirChanged = False
+                
+                nextPos = ns.Vector(currPos.x+(2 if DIR[0] else -2),
+                                    currPos.y+(2 if DIR[1] else -2),
+                                    0)
+                if DIR[0] == 0:
+                    if nextPos.x < 0:
+                        DIR[0] = 1
+                        dirChanged = True
+                else:
+                    if nextPos.x > 100:
+                        DIR[0] = 0
+                        dirChanged = True
     
-    for node_i in range(nodes.GetN()):
-        node = nodes.Get(node_i).__deref__()
-        mobility = node.GetObject[ns.WaypointMobilityModel]().__deref__()
-        currPos = mobility.GetPosition()
-        time = ns.Seconds(0.5)
-        DIR = [1,1]
-        while time.GetSeconds() < 100:
-            dirChanged = False
-            nextPos = ns.Vector(currPos.x+(2 if DIR[0] else -2),
-                                currPos.y+(2 if DIR[1] else -2),
-                                0
-                                )
-            if DIR[0] == 0:
-                if nextPos.x < 0:
-                    DIR[0] = 1
-                    dirChanged = True
-            else:
-                if nextPos.x > 100:
-                    DIR[0] = 0
-                    dirChanged = True
-
-            if DIR[1] == 0:
-                if nextPos.y < 0:
-                    DIR[1] = 1
-                    dirChanged = True
-            else:
-                if nextPos.y > 100:
-                    DIR[1] = 0
-                    dirChanged = True
-
-            # Skip next position since it goes out of bounds
-            if dirChanged:
-                continue
-            time = ns.Seconds(1+time.GetSeconds())
-            wpt = ns.Waypoint (time, nextPos);
-            mobility.AddWaypoint(wpt)
-            currPos = nextPos
-
+                if DIR[1] == 0:
+                    if nextPos.y < 0:
+                        DIR[1] = 1
+                        dirChanged = True
+                else:
+                    if nextPos.y > 100:
+                        DIR[1] = 0
+                        dirChanged = True
+    
+                # Skip next position since it goes out of bounds
+                if dirChanged:
+                    continue
+                
+                time = ns.Seconds(1+time.GetSeconds())
+                wpt = ns.Waypoint (time, nextPos);
+                mobility.AddWaypoint(wpt)
+                currPos = nextPos
 
     # Schedule getNodeCoordinates to run after 1 second of simulation
     event = ns.pythonMakeEvent(getNodeCoordinates, nodes)
     ns.Simulator.Schedule(ns.Seconds(1), event)
     
-    
+    #monitor data  look into GnuplotHelper
+    flowm = ns.flow_monitor.FlowMonitorHelper()
+    flowm.InstallAll()
     # Run simulation for 100 virtual seconds
     ns.Simulator.Stop(ns.Seconds(100))
     ns.Simulator.Run()
-
+    flowm.SerializeToXmlFile("QoS_Report.xml", True, True);
     animateSimulation()
 #%%
-n_nodes = 5
-animateWaypointWalkNodes(n_nodes)
+
+scenario = "test"
+animateWaypointWalkNodes(scenario)
 
